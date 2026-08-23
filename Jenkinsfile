@@ -1,14 +1,6 @@
 pipeline {
     agent any
 
-    tools {
-        jdk 'jdk17'
-    }
-
-    environment {
-        MAVEN_OPTS = '-Dmaven.repo.local=.m2/repository'
-    }
-
     options {
         timestamps()
         disableConcurrentBuilds()
@@ -26,22 +18,28 @@ pipeline {
 
         stage('编译打包') {
             steps {
-                sh './mvnw -B clean package -DskipTests'
+                // Windows 提交的 mvnw 没有可执行位,先补上
+                sh 'chmod +x demo/mvnw'
+                dir('demo') {
+                    sh './mvnw -B clean package -DskipTests'
+                }
             }
             post {
                 success {
-                    archiveArtifacts artifacts: 'target/*.jar', fingerprint: true
+                    archiveArtifacts artifacts: 'demo/target/*.jar', fingerprint: true
                 }
             }
         }
 
         stage('单元测试') {
             steps {
-                sh './mvnw -B test'
+                dir('demo') {
+                    sh './mvnw -B test'
+                }
             }
             post {
                 always {
-                    junit allowEmptyResults: true, testResults: 'target/surefire-reports/*.xml'
+                    junit allowEmptyResults: true, testResults: 'demo/target/surefire-reports/*.xml'
                 }
             }
         }
@@ -49,7 +47,7 @@ pipeline {
         stage('代码扫描 (可选)') {
             steps {
                 withSonarQubeEnv('sonarqube') {   // 需在 Jenkins 系统配置中配置 SonarQube Server
-                    sh './mvnw -B sonar:sonar'
+                    sh 'cd demo && ./mvnw -B sonar:sonar'
                 }
             }
             when {
@@ -61,11 +59,11 @@ pipeline {
             steps {
                 script {
                     def imageTag = "${env.BUILD_NUMBER}"
-                    appImage = docker.build("jenkins-demo:${imageTag}", '-f Dockerfile .')
+                    appImage = docker.build("jenkins-demo:${imageTag}", '-f demo/Dockerfile demo/')
                 }
             }
             when {
-                expression { fileExists('Dockerfile') }
+                expression { fileExists('demo/Dockerfile') }
             }
         }
 
@@ -80,7 +78,7 @@ pipeline {
                         // 或推送到镜像仓库 / 触发 K8s 滚动更新:
                         // sh "kubectl set image deployment/jenkins-demo jenkins-demo=jenkins-demo:${env.BUILD_NUMBER}"
                     } else {
-                        echo "非 main 分支且未选择部署,跳过"
+                        echo '跳过部署'
                     }
                 }
             }
